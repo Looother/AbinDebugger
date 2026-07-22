@@ -14,8 +14,6 @@ from model.abstractor.NodeMapper import ASTNode, IDTokens
 import logger as AbinLogging
 import config as DebugController
 import re
-from pymongo import MongoClient
-
 MatchingPattern = NodeAbstraction
 MatchingPatterns = Iterator[MatchingPattern]
 Hypothesis = Tuple[str, int, float]
@@ -82,37 +80,55 @@ class HypothesisGenerator():
         :rtype: Tuple[MatchingPatterns, int]
         """
         config = DebugController.APP_SETTINGS
-        db_connection = self.mongodb_connection()
-        collection_BugPatterns = db_connection[config['DEBUG_DB_PATTERNS_COLLECTION']]
-        QUERY = [
-            { '$match': { 'bug_metadata.hexdigest': ast_node_hexdigest } },
-            { '$group': { '_id': '$fix_metadata.hexdigest',
-                        'fix_metadata': { '$first': '$fix_metadata' },
-                        'bug_metadata': { '$first': '$bug_metadata' },
-                        'available_identifiers': { '$first': '$available_identifiers' },
-                        'commit_sha': { '$first': '$commit_sha' },
-                        'complexity': { '$first': { '$size': { '$objectToArray': "$fix_metadata.map_ids" } } },
-                        'count_similar': { '$sum': 1 }
-                        }
-            },
-            { '$sort': { 'complexity': 1 } },
-            { '$match': { 'complexity': { '$lte': self.max_complexity } } }
-        ]
-        matching_patterns = collection_BugPatterns.aggregate(QUERY)
-        matching_patterns_count = len(list(matching_patterns))
-        matching_patterns = collection_BugPatterns.aggregate(QUERY)
-        self.matching_patterns = matching_patterns
-        return (matching_patterns, matching_patterns_count)
-    
-    def apply_bugfix_pattern(self, 
-        bugged_node: NodeAbstractor, 
-        pattern: MatchingPattern, 
+        import sqlite3
+        import json
+        db_path = config.get('SQLITE_DB_PATH', 'patterns.db')
+        try:
+            conn = sqlite3.connect(db_path)
+            cursor = conn.cursor()
+            cursor.execute("SELECT data FROM BugPatterns")
+
+            matching_patterns_dict = {}
+            for row in cursor.fetchall():
+                data = json.loads(row[0])
+                if data.get('bug_metadata', {}).get('hexdigest') == ast_node_hexdigest:
+                    fix_hexdigest = data.get('fix_metadata', {}).get('hexdigest')
+                    map_ids = data.get('fix_metadata', {}).get('map_ids', {})
+                    complexity = len(map_ids)
+
+                    if complexity <= self.max_complexity:
+                        if fix_hexdigest not in matching_patterns_dict:
+                            matching_patterns_dict[fix_hexdigest] = {
+                                '_id': fix_hexdigest,
+                                'fix_metadata': data.get('fix_metadata'),
+                                'bug_metadata': data.get('bug_metadata'),
+                                'available_identifiers': data.get('available_identifiers'),
+                                'commit_sha': data.get('commit_sha'),
+                                'complexity': complexity,
+                                'count_similar': 1
+                            }
+                        else:
+                            matching_patterns_dict[fix_hexdigest]['count_similar'] += 1
+
+            matching_patterns_list = list(matching_patterns_dict.values())
+            matching_patterns_list.sort(key=lambda x: x['complexity'])
+
+            matching_patterns_count = len(matching_patterns_list)
+            self.matching_patterns = iter(matching_patterns_list)
+            return (iter(matching_patterns_list), matching_patterns_count)
+        except sqlite3.OperationalError:
+            self.matching_patterns = iter([])
+            return (iter([]), 0)
+
+    def apply_bugfix_pattern(self,
+        bugged_node: NodeAbstractor,
+        pattern: MatchingPattern,
         available_identifiers: IDTokens) -> Iterator[Hypotheses]:
         """ This method applies the fix-pattern to the abstracted node.
 
         This method returns an iterator of hypotheses generated
         due to the application of the fix-pattern.
-        
+
         :param bugged_node: The abstracted node object.
         :type  bugged_node: NodeAbstractor
         :param pattern: The fix pattern.
@@ -126,7 +142,7 @@ class HypothesisGenerator():
 
     def build_hypothesis_model(self, hypothesis: Hypothesis) -> Union[str, None]:
         """ This method creates a new model to test the given hypothesis.
-        
+
         :param hypothesis: The hypothesis that need a model.
         :type  hypothesis: Hypothesis
         :rtype: Union[str, None]
@@ -137,11 +153,11 @@ class HypothesisGenerator():
         indent = re.split('\w', new_model_src[self.candidate - 1])
         hypothesis = indent[0] + hypothesis + '\n'
         new_model_src[self.candidate - 1] = hypothesis
-        
+
         curr_dir = Path(__file__).parent.parent.resolve()
         new_model_filename = f"model{str(self.abduction_depth+1)}.py"
         new_model_path = curr_dir.joinpath('temp', new_model_filename)
-        
+
         try:
             with open(new_model_path, 'w') as m:
                 m.writelines(new_model_src)
@@ -159,7 +175,7 @@ class HypothesisGenerator():
 
         This method will iterate over all bug candidates and generate
         a hypothesis until the iterator `self.bug_candidates` is exhausted.
-        
+
         :rtype: str
         """
         hypothesis: Hypothesis = None
@@ -195,7 +211,7 @@ class HypothesisGenerator():
                             Current Candidate: {self.candidate}. Patterns Found: {count}
                             """
                             )
-                
+
                 model = self.model_src
                 logical_loc = self.LogicalLOC(self.candidate, '\n'.join(model))
                 self.nested_node = logical_loc.get_nested_node()
@@ -217,7 +233,7 @@ class HypothesisGenerator():
     def __exit__(self, exc_tp: Type, exc_value: BaseException,
                  exc_traceback: TracebackType) -> Optional[bool]:
         """ Context manager method is used to ignore/consume all the exceptions.
-        
+
         This method is used to void a raising exception that occurred
         during the execution of the class methods.
 
@@ -280,15 +296,3 @@ class HypothesisGenerator():
         curr_dir = Path(__file__).parent.parent.resolve()
         curr_model_path = curr_dir.joinpath('temp', self.model_name)
         return curr_model_path
-
-    @staticmethod
-    def mongodb_connection() -> MongoClient:
-        """ This method returns a connection to the database.
-        :rtype: MongoClient
-        """
-        config = DebugController.APP_SETTINGS
-        MONGO_URI = f"{config['DB_URI']}://{config['DB_HOST']}:{config['DB_PORT']}"
-        client = MongoClient(MONGO_URI)
-        db_connection = client[config['DEBUG_DB_NAME']]
-        return db_connection
-

@@ -2,201 +2,83 @@
 This module gets the stats from the database.
 """
 from typing import Any, Dict, List, Tuple
-from pymongo import MongoClient, CursorType
-from pymongo.database import Collection
+import sqlite3
+import json
 import config as DebugController
 
 ASTRanking = Tuple[List[str], List[int]]
 
 def get_stats() -> Dict[str, Any]:
     """ This function obtains the stats from the DB collection.
-    
+
     :rtype: Dict[str, Any]
     """
     config = DebugController.APP_SETTINGS
-    MONGO_URI = f"{config['DB_URI']}://{config['DB_HOST']}:{config['DB_PORT']}"
-    client = MongoClient(MONGO_URI)
-    db_connection = client[config['DEBUG_DB_NAME']]
-    collection_BugPatterns = db_connection[config['DEBUG_DB_PATTERNS_COLLECTION']]
-    
-    total_bugfixes = stats_total_bugfixes(collection_BugPatterns)
-    unique_bugfixes = stats_unique_bugfixes(collection_BugPatterns)
-    unique_fixes = stats_unique_fixes(collection_BugPatterns)
-    ranking_fixes = stats_ast_types_fixes(collection_BugPatterns)
-    unique_bugs = stats_unique_bugs(collection_BugPatterns)
-    ranking_bugs = stats_ast_types_bugs(collection_BugPatterns)
-    
+    db_path = config.get('SQLITE_DB_PATH', 'patterns.db')
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT data FROM BugPatterns")
+        rows = cursor.fetchall()
+    except sqlite3.OperationalError:
+        rows = []
+
+    data_items = [json.loads(row[0]) for row in rows]
+
+    total_bugfixes = len(data_items)
+
+    unique_bugfixes_set = set()
+    unique_fixes_set = set()
+    unique_bugs_set = set()
+
+    fixes_ast_counts = {}
+    bugs_ast_counts = {}
+
+    for data in data_items:
+        fix_md = data.get('fix_metadata', {})
+        bug_md = data.get('bug_metadata', {})
+
+        fix_hex = fix_md.get('hexdigest')
+        bug_hex = bug_md.get('hexdigest')
+
+        if fix_hex and bug_hex:
+            unique_bugfixes_set.add((fix_hex, bug_hex))
+        if fix_hex:
+            unique_fixes_set.add(fix_hex)
+        if bug_hex:
+            unique_bugs_set.add(bug_hex)
+
+        fix_ast = fix_md.get('ast_type')
+        if fix_ast:
+            fixes_ast_counts[fix_ast] = fixes_ast_counts.get(fix_ast, 0) + 1
+
+        bug_ast = bug_md.get('ast_type')
+        if bug_ast:
+            bugs_ast_counts[bug_ast] = bugs_ast_counts.get(bug_ast, 0) + 1
+
+    # Sort and rank
+    fixes_ast_sorted = sorted(fixes_ast_counts.items(), key=lambda x: x[1], reverse=True)
+    bugs_ast_sorted = sorted(bugs_ast_counts.items(), key=lambda x: x[1], reverse=True)
+
+    ranking_fixes = (
+        [item[0] for item in fixes_ast_sorted],
+        [item[1] for item in fixes_ast_sorted]
+    )
+    ranking_bugs = (
+        [item[0] for item in bugs_ast_sorted],
+        [item[1] for item in bugs_ast_sorted]
+    )
+
     stats_data = {
         'total_bugfixes': total_bugfixes,
-        'unique_bugfixes': unique_bugfixes,
-        'unique_fixes': unique_fixes,
+        'unique_bugfixes': len(unique_bugfixes_set),
+        'unique_fixes': len(unique_fixes_set),
         'ranking_fixes': ranking_fixes,
-        'unique_bugs': unique_bugs,
+        'unique_bugs': len(unique_bugs_set),
         'ranking_bugs': ranking_bugs
     }
     return stats_data
-
-def stats_total_bugfixes(db_collection: Collection) -> int:
-    """ This function counts the total bug-fixes in the database.
-
-    :param db_collection: the instance of the collection's connection.
-    :type  db_collection: Collection
-    :rtype: int
-    """
-    QUERY_COUNT_PATTERNS = [
-        { 
-            '$group': { '_id': 'null', 
-                    'total_bugfixes': { '$count': { } } 
-            } 
-        }
-    ]
-    cursor_total_bugfixes = db_collection.aggregate(QUERY_COUNT_PATTERNS)
-    total_bugfixes = next(cursor_total_bugfixes)['total_bugfixes']
-    # print(f"Number of Matching Patterns found in the database: {total_patterns}")
-    return total_bugfixes
-
-def stats_unique_bugfixes(db_collection: Collection) -> int:
-    """ This function counts the unique bug-fixes in the database.
-
-    :param db_collection: the instance of the collection's connection.
-    :type  db_collection: Collection
-    :rtype: int
-    """
-    QUERY_UNIQUE_BUGFIXES = [                  
-            {
-                '$group': { 
-                    '_id': {
-                        'fix_hexdigest':'$fix_metadata.hexdigest',
-                        'bug_hexdigest':'$bug_metadata.hexdigest',
-                },
-                'count':{'$sum':1}
-                } 
-            },
-            { '$sort': { 'count': -1 } },
-            { '$group': { '_id': 'null', 
-                         'unique_bugfixes': { '$count': { } } 
-                         }
-            },
-    ]
-    cursor_unique_bugfixes = db_collection.aggregate(QUERY_UNIQUE_BUGFIXES)
-    unique_bugfixes = next(cursor_unique_bugfixes)['unique_bugfixes']
-    # print(f"Number of Unique Bugfixes found in the database: {unique_bugfixes}")
-    return unique_bugfixes
-
-def stats_unique_fixes(db_collection: Collection) -> int:
-    """ This function counts the unique fixes in the database.
-
-    :param db_collection: the instance of the collection's connection.
-    :type  db_collection: Collection
-    :rtype: int
-    """
-    QUERY_UNIQUE_FIXES = [                  
-            {
-                '$group': { 
-                    '_id': {
-                        'fix_hexdigest':'$fix_metadata.hexdigest',
-                },
-                'count':{'$sum':1}
-                } 
-            },
-            { '$sort': { 'count': -1 } },
-            { '$group': { '_id': 'null', 
-                         'unique_fixes': { '$count': { } } 
-                         }
-            },
-    ]
-    cursor_unique_fixes = db_collection.aggregate(QUERY_UNIQUE_FIXES)
-    total_unique_fixes = next(cursor_unique_fixes)['unique_fixes']
-    # print(f"Number of Unique Fixes found in the database: {total_unique_fixes}")
-    return total_unique_fixes
-
-def stats_unique_bugs(db_collection: Collection) -> int:
-    """ This function counts the unique bugs in the database.
-
-    :param db_collection: the instance of the collection's connection.
-    :type  db_collection: Collection
-    :rtype: int
-    """
-    QUERY_UNIQUE_BUGS = [                  
-            {
-                '$group': { 
-                    '_id': {
-                        'bug_hexdigest':'$bug_metadata.hexdigest',
-                },
-                'count':{'$sum':1}
-                } 
-            },
-            { '$sort': { 'count': -1 } },
-            { '$group': { '_id': 'null', 
-                         'unique_bugs': { '$count': { } } 
-                         }
-            },
-            #{ '$limit': 10 }
-    ]
-    cursor_unique_bugs = db_collection.aggregate(QUERY_UNIQUE_BUGS)
-    total_unique_bugs = next(cursor_unique_bugs)['unique_bugs']
-    # print(f"Number of Unique Bugs found in the database: {total_unique_bugs}")
-    return total_unique_bugs
-
-def parse_ast_types(query_result: CursorType) -> ASTRanking:
-    """ This function parses a query result.
-    The query result is parsed to obtain the ranking.
-
-    :param query_result: the query result.
-    :type  query_result: CursorType
-    :rtype: ASTRanking
-    """
-    ast_ranking = list(query_result)
-    ast_types = []
-    ast_freqs = []
-    for item in ast_ranking:
-        ast_types.append(item['_id']['ast_type'])
-        ast_freqs.append(item['freq'])
-    return (ast_types, ast_freqs)
-
-def stats_ast_types_fixes(db_collection: Collection) -> ASTRanking:
-    """ This function queries the database in order to obtain a ranking.
-
-    :param db_collection: the instance of the collection's connection.
-    :type  db_collection: Collection
-    :rtype: ASTRanking
-    """
-    QUERY_FIXES_TYPES = [                  
-            {
-                '$group': { 
-                    '_id': {
-                        'ast_type':'$fix_metadata.ast_type',
-                },
-                'freq':{'$sum':1}
-                } 
-            },
-            { '$sort': { 'freq': -1 } },
-    ]
-    cursor_ast_types = db_collection.aggregate(QUERY_FIXES_TYPES)
-    (ast_types, ast_freqs) = parse_ast_types(cursor_ast_types)
-    return (ast_types, ast_freqs)
-
-def stats_ast_types_bugs(db_collection: Collection) -> ASTRanking:
-    """ This function queries the database in order to obtain a ranking.
-
-    :param db_collection: the instance of the collection's connection.
-    :type  db_collection: Collection
-    :rtype: ASTRanking
-    """
-    QUERY_BUGS_TYPES = [                  
-            {
-                '$group': { 
-                    '_id': {
-                        'ast_type':'$bug_metadata.ast_type',
-                },
-                'freq':{'$sum':1}
-                } 
-            },
-            { '$sort': { 'freq': -1 } },
-    ]
-    cursor_ast_types = db_collection.aggregate(QUERY_BUGS_TYPES)
-    (ast_types, ast_freqs) = parse_ast_types(cursor_ast_types)
-    return (ast_types, ast_freqs)
 
 if __name__ == "__main__":
     get_stats()

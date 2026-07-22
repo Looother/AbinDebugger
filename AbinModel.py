@@ -5,14 +5,15 @@ This is the model representation of the MVC software pattern.
 import sys
 from typing import List, Type, Optional, Tuple, Union
 from types import TracebackType
-from model.core.ModelTester import TestCase, Observation, InfluencePath
+from model.core.ModelTester import TestCase, Observation, InfluencePath, Behavior
+from model.HyphotesisTester import HyphotesisTester
 from model.FaultLocalizator import FaultLocalizator
-from model.HyphotesisTester import Behavior, HyphotesisTester
 from model.HypothesisGenerator import Hypothesis, HypothesisGenerator
 from model.HypothesisRefinement import AbductionSchema
 import pandas as pd
 import logger as AbinLogging
 import config as DebugController
+
 
 Localizator = FaultLocalizator
 Tester = HyphotesisTester
@@ -50,7 +51,7 @@ class AbinModel():
         self.fault_localizator = localizator
         self.hyphotesis_tester = tester
         self.hypotheses_generator = generator
-    
+
     def start_auto_debugging(self, model_src_code = None,
         improvement_candidates_set = None) -> Tuple[str, Behavior, Observation, Observation]:
         """ This method encapsulates the whole debugging process.
@@ -85,7 +86,7 @@ class AbinModel():
         while True:
             new_observation = []
             hypotheses_generator = self.hypotheses_generation(influence_path, model_src_code[:], self.max_complexity)
-            
+
             with hypotheses_generator:
                 for hypothesis in hypotheses_generator:
                     AbinLogging.debugging_logger.info(f"""
@@ -95,7 +96,7 @@ class AbinModel():
                     )
                     self.abduction_breadth += 1
                     (new_model_src_code, behavior, new_observation, hypothesis) = self.hyphotesis_testing(prev_observation, model_src_code[:], hypothesis)
-                    AbinLogging.debugging_logger.info(f""" 
+                    AbinLogging.debugging_logger.info(f"""
                         New Observations:
                         {new_observation}
                         Behavior Type:
@@ -117,10 +118,10 @@ class AbinModel():
                             # insertion sort and save hypothesis here
                             # already implemented in refinement class
                             pass
-                    
+
                     if behavior == Behavior.Correct:
                         break
-            
+
             if behavior == Behavior.Correct:
                 pass
             elif (imprv_candidates
@@ -131,9 +132,9 @@ class AbinModel():
                 result = self.start_auto_debugging(model_src_code[:], imprv_candidates)
                 (new_model_src_code, behavior, prev_observation, new_observation) = result
                 imprv_candidates.clear()
-            
+
             if behavior == Behavior.Correct:
-                AbinLogging.debugging_logger.debug(f""" 
+                AbinLogging.debugging_logger.debug(f"""
                     Previous Observations:
                     {prev_observation}
                     New Observations:
@@ -167,34 +168,34 @@ class AbinModel():
                     model_src_code = localizator.model_src
             else:
                 break
-                
+
 
         if self.abduction_depth == 0:
             AbinLogging.debugging_logger.debug(f"\nUNABLE TO REPAIR!")
         return ('', behavior, prev_observation, new_observation)
-    
-    def fault_localization(self, model_src_code = None, 
+
+    def fault_localization(self, model_src_code = None,
         improvement_candidates_set = None) -> Localizator:
         """ This method encapsulates the fault localization process.
         : rtype: Tuple[str, Behavior, Observation, InfluencePath]
         """
         if improvement_candidates_set is None:
             localizator = self.fault_localizator(model_path = self.bugged_file_path,
-                target_function = self.function_name, 
+                target_function = self.function_name,
                 test_suite = self.test_suite,
                 schema=self.abduction_schema)
         else:
             AbinLogging.debugging_logger.debug(f"Improvement Candidates: {improvement_candidates_set}\n")
             AbinLogging.debugging_logger.debug(f"New Model: {model_src_code}")
             localizator = self.fault_localizator(src_code = model_src_code,
-                improvement_candidates_set = improvement_candidates_set, 
+                improvement_candidates_set = improvement_candidates_set,
                 target_function = self.function_name,
                 test_suite = self.test_suite,
                 schema=self.abduction_schema)
         return localizator
 
-    def hypotheses_generation(self, 
-        influence_path: InfluencePath, 
+    def hypotheses_generation(self,
+        influence_path: InfluencePath,
         src_code: Union[List[str], str],
         max_complexity: int = 3) -> Generator:
         """ This method encapsulates the hypotheses generation process.
@@ -207,12 +208,12 @@ class AbinModel():
         """
         return self.hypotheses_generator(influence_path, src_code, max_complexity)
 
-    def hyphotesis_testing(self, 
-        prev_observation: Observation, 
+    def hyphotesis_testing(self,
+        prev_observation: Observation,
         src_code: Union[List[str], str],
         hypothesis: Hypothesis) -> Tuple[Behavior, Observation]:
         """ This method encapsulates the hypothesis testing process.
-        
+
         :param prev_observation: The previous observation.
         :type  prev_observation: Observation
         :param model_name: The model's name.
@@ -233,7 +234,7 @@ class AbinModel():
 
     def hyphotesis_refinement(self):
         pass
-    
+
     def __enter__(self):
         """ Context manager method """
         return self
@@ -241,7 +242,7 @@ class AbinModel():
     def __exit__(self, exc_tp: Type, exc_value: BaseException,
                  exc_traceback: TracebackType) -> Optional[bool]:
         """ Context manager method to re-raise exceptions that happened during the process.
-        
+
         :param exc_tp: Type of the raised exception.
         :type  exc_tp: Type
         :param exc_value: The raised exception object.
@@ -277,16 +278,16 @@ def parse_csv_data(data):
       parsed_data[newColName] = data[colName].map(getattr(builtins, castType))
     elif castType in ['dict', 'json']:
       parsed_data[newColName] = data[colName].apply(loads)
-    elif castType == 'list':
-      parsed_data[newColName] = data[colName].to_list()
-    elif castType == 'tuple':
-      parsed_data[newColName] = tuple(data[colName].to_list())
+    elif castType.startswith('list'):
+      parsed_data[newColName] = data[colName].apply(loads)
+    elif castType.startswith('tuple'):
+      parsed_data[newColName] = data[colName].apply(lambda x: tuple(loads(x)))
   return (parsed_data, pd.DataFrame(parsed_types))
 
 def main():
     from pathlib import Path
     curr_dir = Path(__file__).parent.resolve()
-    
+
     #path_bugged_file = curr_dir.joinpath("benchmarks", "benchmark0.py")
     #df = pd.read_csv(curr_dir.joinpath("benchmarks", "benchmark0.csv"), keep_default_na=False)
     #func_name = 'get_profit'
@@ -305,17 +306,17 @@ def main():
 
     (parsed_data, parsed_types) = parse_csv_data(df)
     test_cases = parsed_data
-    
+
     abin = AbinModel(func_name, path_bugged_file, test_cases)
     (model_name, behavior, prev_observation, new_observation) = abin.start_auto_debugging()
 
 def debugger_is_active() -> bool:
     """ This method return if the debugger is currently active """
-    gettrace = getattr(sys, 'gettrace', lambda : None) 
+    gettrace = getattr(sys, 'gettrace', lambda : None)
     return gettrace() is not None
 
 if __name__ == "__main__":
-    
+
     if debugger_is_active():
         print('The program is currenly being execute in debug mode.')
     else:

@@ -30,7 +30,7 @@ class HypothesisAbductor(ast.NodeVisitor):
     self.abducted_fix = None
     self.ast_identifiers = ['id', 'n', 's', 'name', 'asname', 'module', 'attr', 'arg']
     self.available_identifiers = self.merge_available_identifiers(
-                                          available_identifiers, 
+                                          available_identifiers,
                                           bugfix['available_identifiers'])
     if node_to_abduct is None:
       self.actual_bug = None
@@ -41,7 +41,7 @@ class HypothesisAbductor(ast.NodeVisitor):
     (ids, ordering) = self.get_possible_ids()
     self.posible_ids = ids
     self.map_tuple_ordering = ordering
-    
+
   def abduct_fix(self) -> None:
     """ This method controls the abduction process. """
     (new_mapping_id, new_mapping_nodes) = self.next_abductive_mapping()
@@ -52,7 +52,7 @@ class HypothesisAbductor(ast.NodeVisitor):
 
   def abduct_node(self, node: ASTNode) -> None:
     """ This method tranforms the given node in a hypothesis
-    
+
     This method will transverse all the abstracted identifiers
     and replace them with a new node mapping in order to
     get a whole new hypothesis.
@@ -83,7 +83,7 @@ class HypothesisAbductor(ast.NodeVisitor):
     """ Method to visit all the nodes.
 
     The method `abduct_node` will be applied to all the visited nodes.
-        
+
     :param node: The visited node
     :type  node: ASTNode
     :rtype: None
@@ -131,7 +131,7 @@ class HypothesisAbductor(ast.NodeVisitor):
 
   def next_abductive_mapping(self) -> Tuple[IDMapping, NodeMapping]:
     """ This method generates a Tuple[IDMapping, NodeMapping].
-    
+
     : rtype: Tuple[IDMapping, NodeMapping]
     """
     curr_ids = self.curr_ids
@@ -166,7 +166,7 @@ class HypothesisAbductor(ast.NodeVisitor):
 
     This method will iterate over all posible hypotheses
     until the iterator `self.posible_ids` is exhausted.
-    
+
     : rtype: str
     """
     try:
@@ -181,7 +181,7 @@ class HypothesisAbductor(ast.NodeVisitor):
   @staticmethod
   def merge_available_identifiers(id_tokens1: IDTokens, id_tokens2: IDTokens) -> IDTokens:
     """ This method merge two IDTokens into one.
-    
+
     :param id_tokens1: The identifiers mapping 1
     :type  id_tokens1: IDTokens
     :param id_tokens2: The identifiers mapping 2
